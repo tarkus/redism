@@ -50,7 +50,7 @@ class Redison
 
   constructor: (@options) ->
     assert !!@options, "options must be an object"
-    @options.servers = ['localhost:6379'] unless @options.servers)
+    @options.servers = ['localhost:6379'] unless @options.servers
 
     @clients = {}
     @servers =

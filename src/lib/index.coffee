@@ -1,3 +1,4 @@
+_      = require 'underscore'
 assert = require 'assert'
 redis  = require 'redis'
 step   = require 'step'
@@ -25,22 +26,58 @@ UNSHARDABLE = [
   "unsubscribe", "unwatch", "zinterstore", "zunionstore"
 ]
 
+###
+# Simple options
+# {
+#   servers: [ 'localhost:6379', 'localhost:6479' ]
+#   password: 'SxZRihb3A5LB6XtrmIU7XOgBAndBbhW47pxx'
+#   database: 3
+# }
+# 
+# Options with scopes
+#
+# {
+#   servers: [
+#     [ ':hash:', [ 'localhost:6579', 'localhost:6679' ] ]
+#     [ 'localhost:6379', 'localhost:6479' ],
+#   ]
+#   password: 'SxZRihb3A5LB6XtrmIU7XOgBAndBbhW47pxx'
+#   database: 3
+# }
+#
+###
 class Redison
-
-  clients: {}
 
   constructor: (@options) ->
     assert !!@options, "options must be an object"
-    assert Array.isArray(@options.servers), "servers must be an array"
+    @options.servers = ['localhost:6379'] unless @options.servers)
 
-    @options.servers.forEach (server) =>
+    @clients = {}
+    @servers =
+      default: null
+      scopes: {}
+    _servers = []
+
+    unless typeof @options.servers[0] is 'string' # Options with scopes
+      for scoped in @options.servers
+        if Array.isArray scoped[1] # Specifed scope
+          @servers.scopes[scoped[0]] = scoped[1]
+          _servers = _.union _servers, scoped[1]
+        else # Default scope
+          @servers.default = scoped
+          _servers = _.union _servers, scoped
+    else # Simple options
+      @servers.default = @options.servers
+      _servers = @options.servers
+
+    assert Array.isArray(@servers.default), "default servers must be set"
+
+    _servers.forEach (server) =>
       fields = server.split /:/
       client = redis.createClient parseInt(fields[1], 10), fields[0]
       client.select @options.database if @options.database
       client.auth @options.password if @options.password
       @clients[server] = client
-
-    @servers = Object.keys @clients
 
     SHARDABLE.forEach (command) =>
       @[command] = =>
@@ -52,12 +89,16 @@ class Redison
       return if command is 'multi'
       @[command] = -> throw new Error "#{command} is not shardable"
 
-  multi: =>
-    new Multi @
+  multi: => new Multi @
 
   nodeFor: (key) ->
-    mod = parseInt(hasher.crc32(key), 16) % @servers.length
-    @servers[mod]
+    if @servers.scopes
+      for scope, servers of @servers.scopes
+        continue unless key.match scope
+        mod = parseInt(hasher.crc32(key), 16) % servers.length
+        return servers[mod]
+    mod = parseInt(hasher.crc32(key), 16) % @servers.default.length
+    return @servers.default[mod]
 
 class Multi
 
@@ -98,6 +139,6 @@ class Multi
       self.interlachen.forEach (node) ->
         index = nodes.indexOf node
         results.push groups[index].shift()
-      callback null, results
+      callback? null, results
 
 module.exports = Redison

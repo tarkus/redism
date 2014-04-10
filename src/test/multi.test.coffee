@@ -1,4 +1,5 @@
 Redison = require '../lib'
+should  = require 'should'
 
 describe 'Multi', ->
 
@@ -13,5 +14,5 @@ describe 'Multi', ->
     multi.set 'bar', 'foo'
     multi.set 'a', 'b'
     multi.exec (error, results) ->
-      results.length.should.be.equal 3
+      should.not.exist error
       done()

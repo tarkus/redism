@@ -11,7 +11,7 @@ describe('Connection', function() {
     return done();
   });
   return it('should be connected', function(done) {
-    this.redison.servers.length.should.equal(2);
+    Object.keys(this.redison.clients).length.should.equal(2);
     return done();
   });
 });

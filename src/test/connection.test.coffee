@@ -8,6 +8,6 @@ describe 'Connection', ->
     done()
 
   it 'should be connected', (done) ->
-    @redison.servers.length.should.equal 2
+    Object.keys(@redison.clients).length.should.equal 2
     done()
 

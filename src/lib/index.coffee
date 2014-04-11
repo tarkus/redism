@@ -100,6 +100,10 @@ class Redison
     mod = parseInt(hasher.crc32(key), 16) % @servers.default.length
     return @servers.default[mod]
 
+  on: (event, callback) ->
+    first = @servers.default[0]
+    @clients[first].on event, callback
+
 class Multi
 
   multis: {}

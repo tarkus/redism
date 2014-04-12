@@ -72,12 +72,15 @@ class Redison
 
     assert Array.isArray(@servers.default), "default servers must be set"
 
-    _servers.forEach (server) =>
+    client = _servers.forEach (server) =>
       fields = server.split /:/
       client = redis.createClient parseInt(fields[1], 10), fields[0]
       client.select @options.database if @options.database
       client.auth @options.password if @options.password
       @clients[server] = client
+      client
+
+    @connected = true
 
     SHARDABLE.forEach (command) =>
       @[command] = =>
@@ -86,8 +89,41 @@ class Redison
         client[command].apply client, arguments
 
     UNSHARDABLE.forEach (command) =>
-      return if command is 'multi'
+      return if command in ['multi', 'mset', 'sinterstore', 'zinterstore']
       @[command] = -> throw new Error "#{command} is not shardable"
+
+  mset: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray(args[0])
+    throw new Error "wrong arguments given" unless args.length % 2 is 0
+    
+    for arg, idx in args by 2
+      if idx + 1 is args.length - 1
+        @set arg, arguments[idx+1], callback
+      else
+        @set arg, arguments[idx+1]
+    @
+
+  sinterstore: =>
+    if Array.isArray arguments[0]
+      key = arguments[0][0]
+    else
+      key = arguments[0]
+    node = @nodeFor key
+    client = @clients[node]
+    client.sinterstore.call client, arguments
+
+  zinterstore: =>
+    if Array.isArray arguments[0]
+      key = arguments[0][0]
+    else
+      key = arguments[0]
+    node = @nodeFor key
+    client = @clients[node]
+    client.zinterstore.call client, arguments
 
   multi: => new Multi @
 
@@ -124,8 +160,52 @@ class Multi
         @
 
     UNSHARDABLE.forEach (command) =>
-      return if command is 'exec'
+      return if command in ['exec', 'mset', 'sinterstore', 'zinterstore']
       @[command] = -> throw new Error "#{command} is not supported"
+
+  mset: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray(args[0])
+    throw new Error "wrong arguments given" unless args.length % 2 is 0
+    
+    for arg, idx in args by 2
+      if idx + 1 is args.length - 1
+        @set arg, arguments[idx+1], callback
+      else
+        @set arg, arguments[idx+1]
+    @
+
+  sinterstore: =>
+    if Array.isArray arguments[0]
+      key = arguments[0][0]
+    else
+      key = arguments[0]
+    node = @nodeFor key
+    multi = @multis[node]
+    unless multi
+      multi = @multis[node] = @redison.clients[node].multi()
+    @interlachen.push node
+    @counter[node] = 0 unless @counter[node]?
+    @counter[node] += 1
+    multi.sinterstore.call multi, arguments
+
+  zinterstore: =>
+    if Array.isArray arguments[0]
+      key = arguments[0][0]
+    else
+      key = arguments[0]
+    node = @nodeFor key
+    multi = @multis[node]
+    unless multi
+      multi = @multis[node] = @redison.clients[node].multi()
+    @interlachen.push node
+    @counter[node] = 0 unless @counter[node]?
+    @counter[node] += 1
+    multi.zinterstore.call multi, arguments
+
 
   exec: (callback) =>
     nodes = Object.keys @multis

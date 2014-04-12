@@ -1,6 +1,6 @@
 {
   "name": "redison",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A redis connection manager",
   "main": "./lib",
   "scripts": {
@@ -26,6 +26,7 @@
     "should": "^3.3.0"
   },
   "dependencies": {
+    "hiredis": "^0.1.16",
     "redis": "^0.10.1",
     "step": "0.0.5",
     "underscore": "^1.6.0"

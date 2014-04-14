@@ -1,6 +1,6 @@
 {
   "name": "redism",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "A redis connection manager",
   "main": "./lib",
   "scripts": {
@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/tarkus/redison.git"
+    "url": "git://github.com/tarkus/redism.git"
   },
   "keywords": [
     "redis",
@@ -17,9 +17,9 @@
   "author": "Tarkus Liu <tarkus.nnkh@gmail.com>",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/tarkus/redison/issues"
+    "url": "https://github.com/tarkus/redism/issues"
   },
-  "homepage": "https://github.com/tarkus/redison",
+  "homepage": "https://github.com/tarkus/redim",
   "devDependencies": {
     "coffee-script": "^1.7.1",
     "mocha": "^1.18.2",

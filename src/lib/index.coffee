@@ -283,12 +283,14 @@ class Redison
 
 class Multi
 
-  multis: {}
-  interlachen: []
-  commands: {}
-  temp_keys: {}
 
   constructor: (@redison) ->
+
+    @multis = {}
+    @interlachen = []
+    @commands = {}
+    @temp_keys = {}
+
     SHARDABLE.forEach (command) =>
       return if command in ['del', 'sinter']
       @[command] = @[command.toUpperCase()] = =>

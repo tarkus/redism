@@ -76,7 +76,6 @@ class Redison
       fields = server.split /:/
       client = redis.createClient parseInt(fields[1], 10), fields[0]
       client.select @options.database if @options.database
-      console.log @options.database
       client.auth @options.password if @options.password
       @clients[server] = client
       client
@@ -105,10 +104,17 @@ class Redison
     callback = args.pop() if typeof args[length-1] is 'function'
     args = args[0] if Array.isArray(args[0])
 
-    args.forEach (key, idx) =>
-      node = @nodeFor key
-      client = @clients[node]
-      client.del.apply client, arguments
+    self = @
+    step ->
+      group = @group()
+      args.forEach (key, idx) ->
+        node = self.nodeFor key
+        client = self.clients[node]
+        client.del.call client, key, group()
+    , (error, groups) ->
+      return callback? error if error
+      assert args.length is groups.length, "wrong number of response for 'del', #{args}"
+      callback? null, 'OK'
 
   mset: =>
     args = Array::slice.call(arguments)
@@ -119,12 +125,15 @@ class Redison
 
     throw new Error "wrong arguments given" unless args.length % 2 is 0
     
-    for arg, idx in args by 2
-      if idx + 1 is args.length - 1
-        @set arg, args[idx+1], callback
-      else
-        @set arg, args[idx+1]
-    @
+    self = @
+    step ->
+      group = @group()
+      for arg, idx in args by 2
+        self.set arg, args[idx+1], group()
+    , (error, groups) ->
+      return callback? error if error
+      assert args.length / 2 is groups.length, "wrong number of response for 'mset', #{args}"
+      callback? null, 'OK'
 
   sinter: =>
     args = Array::slice.call(arguments)
@@ -163,7 +172,7 @@ class Redison
       return callback? error if error
       assert multis.length is groups.length, "wrong number of response"
       dest_client.sinter.call dest_client, args, ->
-        dest_client.del migrated_keys
+        dest_client.del migrated_keys if migrated_keys.length > 0
         callback?.apply @, arguments
 
   sinterstore: =>
@@ -203,7 +212,7 @@ class Redison
       return callback? error if error
       assert multis.length is groups.length, "wrong number of response"
       dest_client.sinterstore.call dest_client, args, ->
-        dest_client.del migrated_keys
+        dest_client.del migrated_keys if migrated_keys.length > 0
         callback?.apply @, arguments
           
   zinterstore: =>
@@ -244,7 +253,7 @@ class Redison
       return callback? error if error
       assert multis.length is groups.length, "wrong number of response"
       dest_client.zinterstore.call dest_client, args, ->
-        dest_client.del migrated_keys
+        dest_client.del migrated_keys if migrated_keys.length > 0
         callback?.apply @, arguments
 
   multi: => new Multi @

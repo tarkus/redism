@@ -76,6 +76,7 @@ class Redison
       fields = server.split /:/
       client = redis.createClient parseInt(fields[1], 10), fields[0]
       client.select @options.database if @options.database
+      console.log @options.database
       client.auth @options.password if @options.password
       @clients[server] = client
       client
@@ -83,14 +84,31 @@ class Redison
     @connected = true
 
     SHARDABLE.forEach (command) =>
-      @[command] = =>
-        node = @nodeFor arguments[0]
+      return if command in ['del', 'sinter']
+      @[command] = @[command.toUpperCase()] = =>
+        if Array.isArray arguments[0]
+          key = arguments[0][0]
+        else
+          key = arguments[0]
+        node = @nodeFor key
         client = @clients[node]
         client[command].apply client, arguments
 
     UNSHARDABLE.forEach (command) =>
       return if command in ['multi', 'mset', 'sinterstore', 'zinterstore']
-      @[command] = -> throw new Error "#{command} is not shardable"
+      @[command] = @[command.toUpperCase()] = -> throw new Error "#{command} is not shardable"
+
+  del: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray(args[0])
+
+    args.forEach (key, idx) =>
+      node = @nodeFor key
+      client = @clients[node]
+      client.del.apply client, arguments
 
   mset: =>
     args = Array::slice.call(arguments)
@@ -98,36 +116,150 @@ class Redison
     callback = null
     callback = args.pop() if typeof args[length-1] is 'function'
     args = args[0] if Array.isArray(args[0])
+
     throw new Error "wrong arguments given" unless args.length % 2 is 0
     
     for arg, idx in args by 2
       if idx + 1 is args.length - 1
-        @set arg, arguments[idx+1], callback
+        @set arg, args[idx+1], callback
       else
-        @set arg, arguments[idx+1]
+        @set arg, args[idx+1]
     @
 
-  sinterstore: =>
-    if Array.isArray arguments[0]
-      key = arguments[0][0]
-    else
-      key = arguments[0]
-    node = @nodeFor key
-    client = @clients[node]
-    client.sinterstore.call client, arguments
+  sinter: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
 
+    remote_nodes = {}
+    multis = []
+    migrated_keys = []
+
+    dest_key  = args[0]
+    dest_node = @nodeFor dest_key
+    dest_client = @clients[dest_node]
+
+    for arg in args[1..]
+      node = @nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      client = @clients[node]
+      multi = multis[node] = client.multi()
+      keys.forEach (key) ->
+        migrated_keys.push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+
+    step ->
+      group = @group()
+      multis.forEach (multi) -> multi.exec group()
+    , (error, groups) ->
+      return callback? error if error
+      assert multis.length is groups.length, "wrong number of response"
+      dest_client.sinter.call dest_client, args, ->
+        dest_client.del migrated_keys
+        callback?.apply @, arguments
+
+  sinterstore: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
+
+    remote_nodes = {}
+    multis = []
+    migrated_keys = []
+
+    dest_key  = args[0]
+    dest_node = @nodeFor dest_key
+    dest_client = @clients[dest_node]
+
+    for arg in args[1..]
+      node = @nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      client = @clients[node]
+      multi = multis[node] = client.multi()
+      keys.forEach (key) ->
+        migrated_keys.push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+
+    step ->
+      group = @group()
+      multis.forEach (multi) -> multi.exec group()
+    , (error, groups) ->
+      return callback? error if error
+      assert multis.length is groups.length, "wrong number of response"
+      dest_client.sinterstore.call dest_client, args, ->
+        dest_client.del migrated_keys
+        callback?.apply @, arguments
+          
   zinterstore: =>
-    if Array.isArray arguments[0]
-      key = arguments[0][0]
-    else
-      key = arguments[0]
-    node = @nodeFor key
-    client = @clients[node]
-    client.zinterstore.call client, arguments
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
+
+    remote_nodes = {}
+    multis = []
+    migrated_keys = []
+
+    dest_key  = args[0]
+    dest_node = @nodeFor dest_key
+    dest_client = @clients[dest_node]
+    number_keys = args[1]
+
+    for arg in args[2...2+number_keys]
+      node = @nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      client = @clients[node]
+      multi = multis[node] = client.multi()
+      keys.forEach (key) ->
+        migrated_keys.push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+
+    step ->
+      group = @group()
+      multis.forEach (multi) -> multi.exec group()
+    , (error, groups) ->
+      return callback? error if error
+      assert multis.length is groups.length, "wrong number of response"
+      dest_client.zinterstore.call dest_client, args, ->
+        dest_client.del migrated_keys
+        callback?.apply @, arguments
 
   multi: => new Multi @
 
+  DEL: @del
+  MSET: @mset
+  ZADD: @zadd
+  SINTER: @siner
+  SINTERSTORE: @sinterstore
+  ZINTERSTORE: @zinterstore
+  MULTI: @multi
+
   nodeFor: (key) ->
+    return unless key?
+    assert typeof key is 'string', "wrong type of sharding key: #{key}"
     if @servers.scopes
       for scope, servers of @servers.scopes
         continue unless key.match scope
@@ -144,24 +276,47 @@ class Multi
 
   multis: {}
   interlachen: []
-  counter: {}
+  commands: {}
+  temp_keys: {}
 
   constructor: (@redison) ->
     SHARDABLE.forEach (command) =>
-      @[command] = =>
-        node = @redison.nodeFor arguments[0]
+      return if command in ['del', 'sinter']
+      @[command] = @[command.toUpperCase()] = =>
+        if Array.isArray arguments[0]
+          key = arguments[0][0]
+        else
+          key = arguments[0]
+        node = @redison.nodeFor key
         multi = @multis[node]
         unless multi
           multi = @multis[node] = @redison.clients[node].multi()
         @interlachen.push node
-        @counter[node] = 0 unless @counter[node]?
-        @counter[node] += 1
+        @commands[node] ?= 0
+        @commands[node] += 1
         multi[command].apply multi, arguments
         @
 
     UNSHARDABLE.forEach (command) =>
       return if command in ['exec', 'mset', 'sinterstore', 'zinterstore']
-      @[command] = -> throw new Error "#{command} is not supported"
+      @[command] = @[command.toUpperCase()] = -> throw new Error "#{command} is not supported"
+
+  del: =>
+    callback = null
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray(args[0])
+
+    args.forEach (key, idx) =>
+      node = @redison.nodeFor key
+      multi = @multis[node]
+      unless multi
+        multi = @multis[node] = @redison.clients[node].multi()
+      @interlachen.push node
+      @commands[node] ?= 0
+      @commands[node] += 1
+      multi.del.call multi, args
 
   mset: =>
     args = Array::slice.call(arguments)
@@ -172,40 +327,126 @@ class Multi
     throw new Error "wrong arguments given" unless args.length % 2 is 0
     
     for arg, idx in args by 2
-      if idx + 1 is args.length - 1
-        @set arg, arguments[idx+1], callback
-      else
-        @set arg, arguments[idx+1]
+      @set arg, args[idx+1]
     @
 
+  sinter: =>
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
+
+    remote_nodes = {}
+
+    dest_key  = args[0]
+    dest_node = @redison.nodeFor dest_key
+    dest_multi = @multis[dest_node]
+    unless dest_multi
+      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+
+    for arg in args[1..]
+      node = @redison.nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      multi = @multis[node]
+      multi = @multis[node] = @clients[node].multi() unless multi
+      keys.forEach (key) =>
+        @temp_keys[node] ?= []
+        @temp_keys[node].push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+        @interlachen.push node
+        @commands[node] ?= 0
+        @commands[node] += 1
+
+    dest_multi.sinterstore.call dest_multi, args, callback
+    @interlachen.push dest_node
+    @commands[dest_node] ?= 0
+    @commands[dest_node] += 1
+
   sinterstore: =>
-    if Array.isArray arguments[0]
-      key = arguments[0][0]
-    else
-      key = arguments[0]
-    node = @nodeFor key
-    multi = @multis[node]
-    unless multi
-      multi = @multis[node] = @redison.clients[node].multi()
-    @interlachen.push node
-    @counter[node] = 0 unless @counter[node]?
-    @counter[node] += 1
-    multi.sinterstore.call multi, arguments
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
+
+    remote_nodes = {}
+
+    dest_key  = args[0]
+    dest_node = @redison.nodeFor dest_key
+    dest_multi = @multis[dest_node]
+    unless dest_multi
+      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+
+    for arg in args[1..]
+      node = @redison.nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      multi = @multis[node]
+      multi = @multis[node] = @clients[node].multi() unless multi
+      keys.forEach (key) =>
+        @temp_keys[node] ?= []
+        @temp_keys[node].push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+        @interlachen.push node
+        @commands[node] ?= 0
+        @commands[node] += 1
+
+    dest_multi.sinterstore.call dest_multi, args
+    @interlachen.push dest_node
+    @commands[dest_node] ?= 0
+    @commands[dest_node] += 1
 
   zinterstore: =>
-    if Array.isArray arguments[0]
-      key = arguments[0][0]
-    else
-      key = arguments[0]
-    node = @nodeFor key
-    multi = @multis[node]
-    unless multi
-      multi = @multis[node] = @redison.clients[node].multi()
-    @interlachen.push node
-    @counter[node] = 0 unless @counter[node]?
-    @counter[node] += 1
-    multi.zinterstore.call multi, arguments
+    args = Array::slice.call(arguments)
+    length = args.length
+    callback = null
+    callback = args.pop() if typeof args[length-1] is 'function'
+    args = args[0] if Array.isArray args[0]
 
+    remote_nodes = {}
+
+    dest_key  = args[0]
+    dest_node = @redison.nodeFor dest_key
+    dest_multi = @multis[dest_node]
+    number_keys = args[1]
+    unless dest_multi
+      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+
+    for arg in args[2...2+number_keys]
+      node = @redison.nodeFor arg
+      remote_nodes[node] ?= []
+      remote_nodes[node].push arg
+
+    for node, keys of remote_nodes
+      continue if node is dest_node
+      multi = @multis[node]
+      multi = @multis[node] = @clients[node].multi() unless multi
+      keys.forEach (key) =>
+        @temp_keys[node] ?= []
+        @temp_keys[node].push key
+        multi.migrate [
+          dest_node.host, dest_node.port,
+          key, dest_node.selected_db ]
+        @interlachen.push node
+        @commands[node] ?= 0
+        @commands[node] += 1
+
+    dest_multi.zinterstore.call dest_multi, args
+    @interlachen.push dest_node
+    @commands[dest_node] ?= 0
+    @commands[dest_node] += 1
 
   exec: (callback) =>
     nodes = Object.keys @multis
@@ -214,15 +455,23 @@ class Multi
       group = @group()
       nodes.forEach (node) -> self.multis[node].exec group()
     , (error, groups) ->
-      return callback error if error
+      self.redison[node].del keys for node, keys of self.temp_keys
+      return callback? error if error
       assert nodes.length is groups.length, "wrong number of response"
       results = []
       groups.forEach (results, index) ->
         node = nodes[index]
-        assert results.length is self.counter[node], "#{node} is missing results"
+        assert results.length is self.commands[node], "#{node} is missing results"
       self.interlachen.forEach (node) ->
         index = nodes.indexOf node
         results.push groups[index].shift()
       callback? null, results
+
+  DEL: @del
+  MSET: @mset
+  SINTER: @siner
+  SINTERSTORE: @sinterstore
+  ZINTERSTORE: @zinterstore
+  EXEC: @exec
 
 module.exports = Redison

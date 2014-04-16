@@ -46,12 +46,14 @@ UNSHARDABLE = [
 # }
 #
 ###
-class Redison
+class Redism
+
 
   constructor: (@options) ->
-    assert !!@options, "options must be an object"
+    @options = @options || {}
     @options.servers = ['localhost:6379'] unless @options.servers
 
+    @shardable = true
     @clients = {}
     @servers =
       default: null
@@ -163,7 +165,7 @@ class Redison
         migrated_keys.push key
         multi.migrate [
           dest_node.host, dest_node.port,
-          key, dest_node.selected_db ]
+          key, dest_node.selected_db,  ]
 
     step ->
       group = @group()
@@ -485,4 +487,4 @@ class Multi
   ZINTERSTORE: @zinterstore
   EXEC: @exec
 
-module.exports = Redison
+module.exports = Redism

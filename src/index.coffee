@@ -48,10 +48,10 @@ UNSHARDABLE = [
 ###
 class Redism
 
-
   constructor: (@options) ->
     @options = @options || {}
     @options.servers = ['localhost:6379'] unless @options.servers
+    @options.connection_report ?= false
 
     @shardable = true
     @clients = {}
@@ -72,7 +72,9 @@ class Redism
       @servers.default = @options.servers
       _servers = @options.servers
 
-    assert Array.isArray(@servers.default), "default servers must be set"
+    clients = 0
+    connected = 0
+    total_clients = _servers.length
 
     client = _servers.forEach (server) =>
       fields = server.split /:/
@@ -80,9 +82,17 @@ class Redism
       client.select @options.database if @options.database
       client.auth @options.password if @options.password
       @clients[server] = client
-      client
 
-    @connected = true
+      if @options.connection_report
+        client.on 'connect', ->
+          clients += 1
+          connected += 1
+          if clients is total_clients
+            assert connected is total_clients,
+              "Redism failed to connect some nodes, total: #{total_clients}, connected: #{connected}"
+            console.log "Redism connected with #{connected} nodes, good to go"
+
+      client
 
     SHARDABLE.forEach (command) =>
       return if command in ['del', 'sinter']

@@ -1,6 +1,6 @@
 {
   "name": "redism",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "A redis connection manager",
   "main": "./lib",
   "scripts": {
@@ -19,7 +19,7 @@
   "bugs": {
     "url": "https://github.com/tarkus/redism/issues"
   },
-  "homepage": "https://github.com/tarkus/redim",
+  "homepage": "https://github.com/tarkus/redism",
   "devDependencies": {
     "coffee-script": "^1.7.1",
     "mocha": "^1.18.2",

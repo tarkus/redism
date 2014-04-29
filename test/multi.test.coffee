@@ -5,7 +5,7 @@ describe 'Multi', ->
 
   beforeEach (done) ->
     @redison = new Redison
-      servers: ['localhost:6379', 'localhost:6479']
+      servers: ['redis://localhost:6379', 'redis://localhost:6479']
     done()
 
   it 'should be executed in the right way', (done) ->

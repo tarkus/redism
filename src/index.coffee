@@ -3,6 +3,7 @@ assert = require 'assert'
 redis  = require 'redis'
 step   = require 'step'
 hasher = require './hasher'
+url    = require 'url'
 
 SHARDABLE = [
   "append", "bitcount", "blpop", "brpop", "debug object", "decr", "decrby", "del", "dump", "exists", "expire",
@@ -29,20 +30,18 @@ UNSHARDABLE = [
 ###
 # Simple options
 # {
-#   servers: [ 'localhost:6379', 'localhost:6479' ]
+#   servers: [ 'redis://localhost:6379/3', 'redis://localhost:6479/3' ]
 #   password: 'SxZRihb3A5LB6XtrmIU7XOgBAndBbhW47pxx'
-#   database: 3
 # }
 # 
 # Options with scopes
 #
 # {
 #   servers: [
-#     [ ':hash:', [ 'localhost:6579', 'localhost:6679' ] ]
-#     [ 'localhost:6379', 'localhost:6479' ],
+#     [ ':hash:', [ 'redis://localhost:6579', 'redis://localhost:6679/3' ] ]
+#     [ 'redis://localhost:6379', 'redis://localhost:6479' ],
 #   ]
 #   password: 'SxZRihb3A5LB6XtrmIU7XOgBAndBbhW47pxx'
-#   database: 3
 # }
 #
 ###
@@ -50,7 +49,7 @@ class Redism
 
   constructor: (@options) ->
     @options = @options || {}
-    @options.servers = ['localhost:6379'] unless @options.servers
+    @options.servers = ['redis://localhost:6379/0'] unless @options.servers
     @options.connection_report ?= false
 
     @shardable = true
@@ -77,10 +76,17 @@ class Redism
     total_clients = _servers.length
 
     client = _servers.forEach (server) =>
-      fields = server.split /:/
-      client = redis.createClient parseInt(fields[1], 10), fields[0]
-      client.select @options.database if @options.database
-      client.auth @options.password if @options.password
+      serverparts = url.parse server
+      host = serverparts.hostname
+      port = parseInt(serverparts.port) or '6379'
+      db = serverparts.path or null
+      pass = null
+      if serverparts.auth
+        authparts = serverparts.auth.split ":"
+        pass = authparts[1] if authparts
+      client = redis.createClient port, host
+      client.select db if db
+      client.auth pass if pass
       @clients[server] = client
 
       if @options.connection_report
@@ -296,7 +302,7 @@ class Redism
 class Multi
 
 
-  constructor: (@redison) ->
+  constructor: (@redism) ->
 
     @multis = {}
     @interlachen = []
@@ -310,10 +316,10 @@ class Multi
           key = arguments[0][0]
         else
           key = arguments[0]
-        node = @redison.nodeFor key
+        node = @redism.nodeFor key
         multi = @multis[node]
         unless multi
-          multi = @multis[node] = @redison.clients[node].multi()
+          multi = @multis[node] = @redism.clients[node].multi()
         @interlachen.push node
         @commands[node] ?= 0
         @commands[node] += 1
@@ -332,10 +338,10 @@ class Multi
     args = args[0] if Array.isArray(args[0])
 
     args.forEach (key, idx) =>
-      node = @redison.nodeFor key
+      node = @redism.nodeFor key
       multi = @multis[node]
       unless multi
-        multi = @multis[node] = @redison.clients[node].multi()
+        multi = @multis[node] = @redism.clients[node].multi()
       @interlachen.push node
       @commands[node] ?= 0
       @commands[node] += 1
@@ -363,13 +369,13 @@ class Multi
     remote_nodes = {}
 
     dest_key  = args[0]
-    dest_node = @redison.nodeFor dest_key
+    dest_node = @redism.nodeFor dest_key
     dest_multi = @multis[dest_node]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
 
     for arg in args[1..]
-      node = @redison.nodeFor arg
+      node = @redism.nodeFor arg
       remote_nodes[node] ?= []
       remote_nodes[node].push arg
 
@@ -402,13 +408,13 @@ class Multi
     remote_nodes = {}
 
     dest_key  = args[0]
-    dest_node = @redison.nodeFor dest_key
+    dest_node = @redism.nodeFor dest_key
     dest_multi = @multis[dest_node]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
 
     for arg in args[1..]
-      node = @redison.nodeFor arg
+      node = @redism.nodeFor arg
       remote_nodes[node] ?= []
       remote_nodes[node].push arg
 
@@ -441,14 +447,14 @@ class Multi
     remote_nodes = {}
 
     dest_key  = args[0]
-    dest_node = @redison.nodeFor dest_key
+    dest_node = @redism.nodeFor dest_key
     dest_multi = @multis[dest_node]
     number_keys = args[1]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redison.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
 
     for arg in args[2...2+number_keys]
-      node = @redison.nodeFor arg
+      node = @redism.nodeFor arg
       remote_nodes[node] ?= []
       remote_nodes[node].push arg
 
@@ -478,7 +484,7 @@ class Multi
       group = @group()
       nodes.forEach (node) -> self.multis[node].exec group()
     , (error, groups) ->
-      self.redison[node].del keys for node, keys of self.temp_keys
+      self.redism[node].del keys for node, keys of self.temp_keys
       return callback? error if error
       assert nodes.length is groups.length, "wrong number of response"
       results = []

@@ -77,9 +77,10 @@ class Redism
 
     client = _servers.forEach (server) =>
       serverparts = url.parse server
+      return console.error "please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
       host = serverparts.hostname
       port = parseInt(serverparts.port) or '6379'
-      db = serverparts.path or null
+      db = serverparts.pathname?.slice 1 or null
       pass = null
       if serverparts.auth
         authparts = serverparts.auth.split ":"

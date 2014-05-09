@@ -54,6 +54,8 @@ class Redism
 
     @shardable = true
     @clients = {}
+    @client_list = []
+    @server_list = {}
     @servers =
       default: null
       scopes: {}
@@ -89,6 +91,9 @@ class Redism
       client.select db if db
       client.auth pass if pass
       @clients[server] = client
+      @server_list[server] = 0 unless @server_list[server]?
+      @server_list[server] += 1
+      @client_list.push server
 
       if @options.connection_report
         client.on 'connect', ->

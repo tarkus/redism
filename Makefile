@@ -1,5 +1,5 @@
 build:
-	mkdir -p lib && ./node_modules/.bin/coffee -c -o lib src
+	mkdir -p lib && ./node_modules/.bin/coffee -c --bare -o lib src
 
 test:
 	./node_modules/.bin/_mocha --compilers coffee:coffee-script/register --reporter spec

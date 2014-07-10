@@ -50,7 +50,6 @@ class Redism
   constructor: (@options) ->
     @options = @options || {}
     @options.servers = ['redis://localhost:6379/0'] unless @options.servers
-    @options.connection_report ?= false
 
     @shardable = true
     @clients = {}
@@ -61,17 +60,26 @@ class Redism
       scopes: {}
     _servers = []
 
-    unless typeof @options.servers[0] is 'string' # Options with scopes
-      for scoped in @options.servers
-        if Array.isArray scoped[1] # Specifed scope
-          @servers.scopes[scoped[0]] = scoped[1]
-          _servers = _.union _servers, scoped[1]
-        else # Default scope
-          @servers.default = scoped
-          _servers = _.union _servers, scoped
-    else # Simple options
+    if typeof @options.servers[0] is 'string'
+      # Simple options => [ 'redis://1.2.3.4:5678/9' ]
       @servers.default = @options.servers
       _servers = @options.servers
+    else # Options with scopes
+      for scope in @options.servers
+
+        # Expect
+        #     [ "xxx", ['redis://1.2.3.4:5678/9'] ]
+        #   Or
+        #     [ 'redis://1.2.3.4:5678/9' ]
+        
+        if Array.isArray scope[1] # Specifed scope
+          [ name, servers ] = scope
+          @servers.scopes[name] = servers
+        else # Default scope
+          servers = scope
+          @servers.default = servers
+
+        _servers = _.union _servers, servers
 
     clients = 0
     connected = 0
@@ -79,7 +87,7 @@ class Redism
 
     client = _servers.forEach (server) =>
       serverparts = url.parse server
-      return console.error "please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
+      return console.error "Please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
       host = serverparts.hostname
       port = parseInt(serverparts.port) or '6379'
       db = serverparts.pathname?.slice 1 or null
@@ -95,14 +103,15 @@ class Redism
       @server_list[server] += 1
       @client_list.push server
 
-      if @options.connection_report
+      if @options.name
+        name = @options.name
         client.on 'connect', ->
           clients += 1
           connected += 1
           if clients is total_clients
             assert connected is total_clients,
-              "Redism failed to connect some nodes, total: #{total_clients}, connected: #{connected}"
-            console.log "Redism connected with #{connected} nodes, good to go"
+              "#{name}: failed to connect some nodes, expected: #{total_clients}, connected: #{connected}"
+            console.log "#{name}: #{connected} nodes connected"
 
       client
 

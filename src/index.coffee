@@ -47,6 +47,8 @@ UNSHARDABLE = [
 ###
 class Redism
 
+  _ready: false
+
   constructor: (@options) ->
     @options = @options || {}
     @options.servers = ['redis://localhost:6379/0'] unless @options.servers
@@ -105,12 +107,13 @@ class Redism
 
       if @options.name
         name = @options.name
-        client.on 'connect', ->
+        client.on 'connect', =>
           clients += 1
           connected += 1
           if clients is total_clients
             assert connected is total_clients,
               "#{name}: failed to connect some nodes, expected: #{total_clients}, connected: #{connected}"
+            @_ready = true
             console.log "#{name}: #{connected} nodes connected"
 
       client
@@ -298,6 +301,8 @@ class Redism
   SINTERSTORE: @sinterstore
   ZINTERSTORE: @zinterstore
   MULTI: @multi
+
+  isReady: -> @_ready
 
   nodeFor: (key) ->
     return unless key?

@@ -83,40 +83,35 @@ class Redism
 
         _servers = _.union _servers, servers
 
-    clients = 0
-    connected = 0
-    total_clients = _servers.length
+    unless @options.test_config
+      connected = 0
+      total = _servers.length
 
-    client = _servers.forEach (server) =>
-      serverparts = url.parse server
-      return console.error "Please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
-      host = serverparts.hostname
-      port = parseInt(serverparts.port) or '6379'
-      db = serverparts.pathname?.slice 1 or null
-      pass = null
-      if serverparts.auth
-        authparts = serverparts.auth.split ":"
-        pass = authparts[1] if authparts
-      client = redis.createClient port, host
-      client.select db if db
-      client.auth pass if pass
-      @clients[server] = client
-      @server_list[server] = 0 unless @server_list[server]?
-      @server_list[server] += 1
-      @client_list.push server
+      _servers.forEach (server) =>
+        serverparts = url.parse server
+        return console.error "Please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
+        host = serverparts.hostname
+        port = parseInt(serverparts.port) or '6379'
+        db = serverparts.pathname?.slice 1 or null
+        pass = null
+        if serverparts.auth
+          authparts = serverparts.auth.split ":"
+          pass = authparts[1] if authparts
+        client = redis.createClient port, host
+        client.select db if db
+        client.auth pass if pass
+        @clients[server] = client
+        @server_list[server] = 0 unless @server_list[server]?
+        @server_list[server] += 1
+        @client_list.push server
 
-      if @options.name
-        name = @options.name
-        client.on 'connect', =>
-          clients += 1
-          connected += 1
-          if clients is total_clients
-            assert connected is total_clients,
-              "#{name}: failed to connect some nodes, expected: #{total_clients}, connected: #{connected}"
-            @_ready = true
-            console.log "#{name}: #{connected} nodes connected"
-
-      client
+        if @options.name
+          name = @options.name
+          client.on 'connect', =>
+            connected += 1
+            if connected is total
+              @_ready = true
+              console.log "#{name}: #{connected} nodes connected"
 
     SHARDABLE.forEach (command) =>
       return if command in ['del', 'sinter']

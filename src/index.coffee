@@ -143,11 +143,30 @@ class Redism
       return if command in ['multi', 'mset', 'sinterstore', 'zinterstore']
       @[command] = @[command.toUpperCase()] = -> throw new Error "#{command} is not shardable"
 
-  getClient: (node, callback) ->
+  isReady: -> @ready
+
+  on: (event, callback) ->
+    first = @nodes.default[0]
+    @getClient(first).on event, callback
+
+  nodeFor: (key) ->
+    return unless key?
+    assert typeof key is 'string', "wrong type of sharding key: #{key}"
+    if @nodes.scopes
+      for scope, nodes of @nodes.scopes
+        continue unless key.match scope
+        mod = parseInt(hasher.crc32(key), 16) % nodes.length
+        return nodes[mod]
+    mod = parseInt(hasher.crc32(key), 16) % @nodes.default.length
+    return @nodes.default[mod]
+
+  getNode: (node, callback) ->
     client = @clients[node]
     client = @connectors[node]() unless client
     client.on 'connect', callback.bind(client) if callback?
     client
+
+  getClient: => @getNode.apply @, arguments
 
   del: =>
     args = Array::slice.call(arguments)
@@ -317,19 +336,6 @@ class Redism
   SINTERSTORE: @sinterstore
   ZINTERSTORE: @zinterstore
   MULTI: @multi
-
-  isReady: -> @ready
-
-  nodeFor: (key) ->
-    return unless key?
-    assert typeof key is 'string', "wrong type of sharding key: #{key}"
-    if @nodes.scopes
-      for scope, nodes of @nodes.scopes
-        continue unless key.match scope
-        mod = parseInt(hasher.crc32(key), 16) % nodes.length
-        return nodes[mod]
-    mod = parseInt(hasher.crc32(key), 16) % @nodes.default.length
-    return @nodes.default[mod]
 
 
 class Multi

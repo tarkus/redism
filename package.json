@@ -1,6 +1,6 @@
 {
   "name": "redism",
-  "version": "0.3.16",
+  "version": "0.3.17",
   "description": "A redis connection manager",
   "main": "./lib",
   "scripts": {

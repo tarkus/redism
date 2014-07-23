@@ -30,14 +30,14 @@ UNSHARDABLE = [
 ###
 # Simple options
 # {
-#   servers: [ 'redis://localhost:6379/3', 'redis://localhost:6479/3' ]
+#   nodes: [ 'redis://localhost:6379/3', 'redis://localhost:6479/3' ]
 #   password: 'SxZRihb3A5LB6XtrmIU7XOgBAndBbhW47pxx'
 # }
 # 
 # Options with scopes
 #
 # {
-#   servers: [
+#   nodes: [
 #     [ ':hash:', [ 'redis://localhost:6579', 'redis://localhost:6679/3' ] ]
 #     [ 'redis://localhost:6379', 'redis://localhost:6479' ],
 #   ]
@@ -47,27 +47,32 @@ UNSHARDABLE = [
 ###
 class Redism
 
-  _ready: false
+  shardable: true   # Just a flag
 
   constructor: (@options) ->
-    @options = @options || {}
-    @options.servers = ['redis://localhost:6379/0'] unless @options.servers
+    @ready = false
 
-    @shardable = true
-    @clients = {}
-    @client_list = []
-    @server_list = {}
-    @servers =
-      default: null
-      scopes: {}
-    _servers = []
+    @options ?= {}
+    @options.name    ?= "Redism instance"   # Set a name for connection report
+    @options.nodes   ?= @options.servers    # Alias nodes as servers in options
+    @options.nodes   ?= ['redis://localhost:6379/0']
+    @options.instant ?= false   # We don't connect to node instantly by default
 
-    if typeof @options.servers[0] is 'string'
+    @clients = {}       # Redis client hash => "redis://localhost:6379/0": [ Redis client object ] 
+    @node_list = []     # Node name array
+    @server_list = {}   # Server name hash => "localhost:6379": 2
+    @connectors = {}    # Connector for connecting to node
+
+    # Structured node hash
+    @nodes = { scopes: {}, default: null }
+
+    # Parse 'nodes' parameter
+    if typeof @options.nodes[0] is 'string'
       # Simple options => [ 'redis://1.2.3.4:5678/9' ]
-      @servers.default = @options.servers
-      _servers = @options.servers
+      @nodes.default = @options.nodes
+      @node_list = @options.nodes
     else # Options with scopes
-      for scope in @options.servers
+      for scope in @options.nodes
 
         # Expect
         #     [ "xxx", ['redis://1.2.3.4:5678/9'] ]
@@ -75,45 +80,53 @@ class Redism
         #     [ 'redis://1.2.3.4:5678/9' ]
         
         if Array.isArray scope[1] # Specifed scope
-          [ name, servers ] = scope
-          @servers.scopes[name] = servers
+          [ name, nodes ] = scope
+          @nodes.scopes[name] = nodes
         else # Default scope
-          servers = scope
-          @servers.default = servers
+          nodes = scope
+          @nodes.default = nodes
 
-        _servers = _.union _servers, servers
+        @node_list = _.union @node_list, nodes
 
-    unless @options.test_config
-      connected = 0
-      total = _servers.length
+    connected = 0
+    total = @node_list.length
 
-      connect_check = =>
-        connected += 1
-        if connected is total
-          @_ready = true
-          console.log "#{name}: #{connected} nodes connected"
+    connection_check = =>
+      connected += 1
+      if connected is total
+        @ready = true
+        console.log "#{@options.name}: #{connected} nodes connected"
 
-      _servers.forEach (server) =>
-        serverparts = url.parse server
-        return console.error "Please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
-        host = serverparts.hostname
-        port = parseInt(serverparts.port) or '6379'
-        db = serverparts.pathname?.slice 1 or null
-        pass = null
-        if serverparts.auth
-          authparts = serverparts.auth.split ":"
-          pass = authparts[1] if authparts
+    console.log "#{@options.name}: #{total} nodes registered"
+
+    @node_list.forEach (node) =>
+      nodeparts = url.parse node
+      return console.error "Please use redis url instead #{node}" unless nodeparts.protocol is 'redis:'
+
+      host = nodeparts.hostname
+      port = parseInt(nodeparts.port) or '6379'
+      db = nodeparts.pathname?.slice 1 or null
+      pass = null
+
+      if nodeparts.auth
+        authparts = nodeparts.auth.split ":"
+        pass = authparts[1] if authparts
+
+      @connectors[node] = =>
         client = redis.createClient port, host, no_ready_check: true
         client.select db if db
         client.auth pass if pass
-        @clients[server] = client
-        @server_list[server] = 0 unless @server_list[server]?
-        @server_list[server] += 1
-        @client_list.push server
+        @clients[node] = client
+        @server_list["#{host}:#{port}"] or= 0
+        @server_list["#{host}:#{port}"] += 1
+        return client
 
-        if @options.name
-          name = @options.name
-          client.on 'connect', connect_check
+      if @options.instant
+        client = @connectors[node]()
+        client.on 'connect', connection_check
+
+    # Makr it as ready for on-demands
+    @ready = true unless @options.instant
 
     SHARDABLE.forEach (command) =>
       return if command in ['del', 'sinter']
@@ -123,12 +136,18 @@ class Redism
         else
           key = arguments[0]
         node = @nodeFor key
-        client = @clients[node]
+        client = @getClient node
         client[command].apply client, arguments
 
     UNSHARDABLE.forEach (command) =>
       return if command in ['multi', 'mset', 'sinterstore', 'zinterstore']
       @[command] = @[command.toUpperCase()] = -> throw new Error "#{command} is not shardable"
+
+  getClient: (node, callback) ->
+    client = @clients[node]
+    client = @connectors[node]() unless client
+    client.on 'connect', callback.bind(client) if callback?
+    client
 
   del: =>
     args = Array::slice.call(arguments)
@@ -142,7 +161,7 @@ class Redism
       group = @group()
       args.forEach (key, idx) ->
         node = self.nodeFor key
-        client = self.clients[node]
+        client = self.getClient(node)
         client.del.call client, key, group()
     , (error, groups) ->
       return callback? error if error
@@ -181,7 +200,7 @@ class Redism
 
     dest_key  = args[0]
     dest_node = @nodeFor dest_key
-    dest_client = @clients[dest_node]
+    dest_client = @getClient dest_node
 
     for arg in args[1..]
       node = @nodeFor arg
@@ -190,7 +209,7 @@ class Redism
 
     for node, keys of remote_nodes
       continue if node is dest_node
-      client = @clients[node]
+      client = @getClient node
       multi = multis[node] = client.multi()
       keys.forEach (key) ->
         migrated_keys.push key
@@ -221,7 +240,7 @@ class Redism
 
     dest_key  = args[0]
     dest_node = @nodeFor dest_key
-    dest_client = @clients[dest_node]
+    dest_client = @getClient dest_node
 
     for arg in args[1..]
       node = @nodeFor arg
@@ -230,7 +249,7 @@ class Redism
 
     for node, keys of remote_nodes
       continue if node is dest_node
-      client = @clients[node]
+      client = @getClient node
       multi = multis[node] = client.multi()
       keys.forEach (key) ->
         migrated_keys.push key
@@ -261,7 +280,7 @@ class Redism
 
     dest_key  = args[0]
     dest_node = @nodeFor dest_key
-    dest_client = @clients[dest_node]
+    dest_client = @getClient dest_node
     number_keys = args[1]
 
     for arg in args[2...2+number_keys]
@@ -271,7 +290,7 @@ class Redism
 
     for node, keys of remote_nodes
       continue if node is dest_node
-      client = @clients[node]
+      client = @getClient node
       multi = multis[node] = client.multi()
       keys.forEach (key) ->
         migrated_keys.push key
@@ -299,25 +318,21 @@ class Redism
   ZINTERSTORE: @zinterstore
   MULTI: @multi
 
-  isReady: -> @_ready
+  isReady: -> @ready
 
   nodeFor: (key) ->
     return unless key?
     assert typeof key is 'string', "wrong type of sharding key: #{key}"
-    if @servers.scopes
-      for scope, servers of @servers.scopes
+    if @nodes.scopes
+      for scope, nodes of @nodes.scopes
         continue unless key.match scope
-        mod = parseInt(hasher.crc32(key), 16) % servers.length
-        return servers[mod]
-    mod = parseInt(hasher.crc32(key), 16) % @servers.default.length
-    return @servers.default[mod]
+        mod = parseInt(hasher.crc32(key), 16) % nodes.length
+        return nodes[mod]
+    mod = parseInt(hasher.crc32(key), 16) % @nodes.default.length
+    return @nodes.default[mod]
 
-  on: (event, callback) ->
-    first = @servers.default[0]
-    @clients[first].on event, callback
 
 class Multi
-
 
   constructor: (@redism) ->
 
@@ -336,7 +351,7 @@ class Multi
         node = @redism.nodeFor key
         multi = @multis[node]
         unless multi
-          multi = @multis[node] = @redism.clients[node].multi()
+          multi = @multis[node] = @redism.getClient(node).multi()
         @interlachen.push node
         @commands[node] ?= 0
         @commands[node] += 1
@@ -358,7 +373,7 @@ class Multi
       node = @redism.nodeFor key
       multi = @multis[node]
       unless multi
-        multi = @multis[node] = @redism.clients[node].multi()
+        multi = @multis[node] = @redism.getClient(node).multi()
       @interlachen.push node
       @commands[node] ?= 0
       @commands[node] += 1
@@ -389,7 +404,7 @@ class Multi
     dest_node = @redism.nodeFor dest_key
     dest_multi = @multis[dest_node]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.getClient(dest_node).multi()
 
     for arg in args[1..]
       node = @redism.nodeFor arg
@@ -399,7 +414,7 @@ class Multi
     for node, keys of remote_nodes
       continue if node is dest_node
       multi = @multis[node]
-      multi = @multis[node] = @clients[node].multi() unless multi
+      multi = @multis[node] = @getClient(node).multi() unless multi
       keys.forEach (key) =>
         @temp_keys[node] ?= []
         @temp_keys[node].push key
@@ -428,7 +443,7 @@ class Multi
     dest_node = @redism.nodeFor dest_key
     dest_multi = @multis[dest_node]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.getClient(dest_node).multi()
 
     for arg in args[1..]
       node = @redism.nodeFor arg
@@ -438,7 +453,7 @@ class Multi
     for node, keys of remote_nodes
       continue if node is dest_node
       multi = @multis[node]
-      multi = @multis[node] = @clients[node].multi() unless multi
+      multi = @multis[node] = @redism.getClient(node).multi() unless multi
       keys.forEach (key) =>
         @temp_keys[node] ?= []
         @temp_keys[node].push key
@@ -468,7 +483,7 @@ class Multi
     dest_multi = @multis[dest_node]
     number_keys = args[1]
     unless dest_multi
-      dest_multi = @multis[dest_node] = @redism.clients[dest_node].multi()
+      dest_multi = @multis[dest_node] = @redism.getClient(dest_node).multi()
 
     for arg in args[2...2+number_keys]
       node = @redism.nodeFor arg
@@ -478,7 +493,7 @@ class Multi
     for node, keys of remote_nodes
       continue if node is dest_node
       multi = @multis[node]
-      multi = @multis[node] = @clients[node].multi() unless multi
+      multi = @multis[node] = @redism.getClient(node).multi() unless multi
       keys.forEach (key) =>
         @temp_keys[node] ?= []
         @temp_keys[node].push key

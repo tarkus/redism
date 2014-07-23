@@ -22,11 +22,9 @@ describe 'Sharding', ->
   beforeEach (done) ->
     @redism = new Redism
       servers: servers
-      test_config: true
 
     @new_redism = new Redism
       servers: new_servers
-      test_config: true
 
     done()
 

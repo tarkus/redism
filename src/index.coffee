@@ -87,6 +87,12 @@ class Redism
       connected = 0
       total = _servers.length
 
+      connect_check = =>
+        connected += 1
+        if connected is total
+          @_ready = true
+          console.log "#{name}: #{connected} nodes connected"
+
       _servers.forEach (server) =>
         serverparts = url.parse server
         return console.error "Please use redis url instead #{server}" unless serverparts.protocol is 'redis:'
@@ -97,7 +103,7 @@ class Redism
         if serverparts.auth
           authparts = serverparts.auth.split ":"
           pass = authparts[1] if authparts
-        client = redis.createClient port, host
+        client = redis.createClient port, host, no_ready_check: true
         client.select db if db
         client.auth pass if pass
         @clients[server] = client
@@ -107,11 +113,7 @@ class Redism
 
         if @options.name
           name = @options.name
-          client.on 'connect', =>
-            connected += 1
-            if connected is total
-              @_ready = true
-              console.log "#{name}: #{connected} nodes connected"
+          client.on 'connect', connect_check
 
     SHARDABLE.forEach (command) =>
       return if command in ['del', 'sinter']
